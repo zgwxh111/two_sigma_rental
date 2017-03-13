@@ -40,7 +40,7 @@ if (LOAD_DATA == True):
         test0 = json.load(data_file)
    
 # affichage des noms des différentes variables
-[str(u) for u in train0.keys()]
+varnames = [str(u) for u in train0.keys()]
 
 # Variable 'interest_level': calcul du nombre d'occurrences
 tril = aslist(train0, 'interest_level', str)

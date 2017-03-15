@@ -112,7 +112,7 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     param['num_class'] = 3
     param['eval_metric'] = "mlogloss"
     param['min_child_weight'] = 1
-    param['subsample'] = 0.7
+    param['subsample'] = 0.6
     param['colsample_bytree'] = 0.7
     param['seed'] = seed_val
     param['seed'] = seed_val
@@ -172,5 +172,5 @@ if CREATE_SUBMISSION_FILE == True:
     out_df = pd.DataFrame(preds)
     out_df.columns = ["high", "medium", "low"]
     out_df["listing_id"] = test_df.listing_id.values
-    out_df.to_csv("../output/xgb_starter.csv", index=False)
+    out_df.to_csv("../output/xgb_starter_2.csv", index=False)
     

@@ -13,6 +13,9 @@ from sklearn.model_selection import train_test_split, ShuffleSplit, cross_val_sc
 from sklearn.metrics import log_loss
 import multiprocessing
 import xgboost as xgb
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from scipy import sparse
+
 
 # nb of processor cores
 n_cores = multiprocessing.cpu_count()
@@ -54,6 +57,7 @@ misc_feats = ["created", "display_address", "features", "photos"]
 def add_features(df):
     df["num_photos"] = df["photos"].apply(len)
     df["num_features"] = df["features"].apply(len)
+    df['features'] = df["features"].apply(lambda x: " ".join(["_".join(i.split(" ")) for i in x]))
     df["num_description_words"] = df["description"].apply(lambda x: len(x.split(" ")))
     df["created"] = pd.to_datetime(df["created"])
     df["created_year"] = df["created"].dt.year
@@ -75,16 +79,23 @@ df = add_features(df)
 features_to_use = num_feats
 features_to_use.extend(["num_photos", "num_features", "num_description_words",
              "created_year", "created_month", "created_day"])
-#features_to_use.extend(cat_feats)
+features_to_use.extend(cat_feats)
 
-X = df[features_to_use]
+def to_csr_mat(df):
+    tfidf = CountVectorizer(stop_words='english', max_features=200)
+    feat_sparse = tfidf.fit_transform(df["features"])
+    X = sparse.hstack([df[features_to_use], feat_sparse]).tocsr()
+    #desc_sparse = tfidf.fit_transform(df["description"])
+    #X = sparse.hstack([df[features_to_use], feat_sparse, desc_sparse]).tocsr()
+    return X
+
+X = to_csr_mat(df)
+#X = df[features_to_use]
 target_num_map = {'high':0, 'medium':1, 'low':2}
 y = np.array(df['interest_level'].apply(lambda x: target_num_map[x]))
 
 X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=valid_size, random_state=seed)
-
-
 
 
 
@@ -128,10 +139,8 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
 cv_scores = []
 kf = KFold(n_splits=3, shuffle=True, random_state=seed)
 for dev_index, val_index in kf.split(range(X_train.shape[0])):
-    dev_X = X_train.values[dev_index,:] 
-    val_X = X_train.values[val_index,:]
-    dev_y = y_train[dev_index]
-    val_y = y_train[val_index]
+    dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
+    dev_y, val_y = y_train[dev_index], y_train[val_index]
     preds, model = runXGB(dev_X, dev_y, val_X, val_y)
     cv_scores.append(log_loss(val_y, preds))
     print(cv_scores)
@@ -140,7 +149,7 @@ for dev_index, val_index in kf.split(range(X_train.shape[0])):
 #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
 #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
 
-preds, model = runXGB(X_train.values, y_train, X_val.values, num_rounds=400)
+preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)
 val_score = log_loss(y_val, preds)
 
 print('CV score: log_loss = ' + str(np.mean(cv_scores)))
@@ -157,7 +166,8 @@ if CREATE_SUBMISSION_FILE == True:
     if LOAD_DATA == True:
         test_df = pd.read_json(open("../input/test.json", "r"))
     test_df = add_features(test_df)
-    X_test = test_df[features_to_use]
+    X_test = to_csr_mat(test_df)
+    #X_test = test_df[features_to_use]
     preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
     out_df = pd.DataFrame(preds)
     out_df.columns = ["high", "medium", "low"]

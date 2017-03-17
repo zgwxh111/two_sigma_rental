@@ -26,7 +26,7 @@ output_files_path = '../output'
 # random seed
 seed = 123
 # validation set size
-valid_size = .3
+valid_size = .0
 # CV parameters
 cv_n_splits = 3
 cv_test_size = .3
@@ -45,10 +45,25 @@ CREATE_SUBMISSION_FILE = True
 ##################################################################
 if LOAD_DATA == True:
     df = pd.read_json(open("../input/train.json", "r"))
+    test_df = pd.read_json(open("../input/test.json", "r"))
+
     
 num_feats = ["bathrooms", "bedrooms", "latitude", "longitude", "price",]
 cat_feats = ["display_address", "manager_id", "building_id", "street_address"]
 misc_feats = ["created", "display_address", "features", "photos"]
+
+
+##################################################################
+# Creating the label encoders
+##################################################################
+lbl_dict = {}
+for f in cat_feats:
+    if df[f].dtype=='object':
+        #print(f)
+        lbl = preprocessing.LabelEncoder()
+        lbl.fit(list(df[f].values))
+        lbl.classes_ = np.append(lbl.classes_, '_unknown_')
+        lbl_dict[f] = lbl
 
 
 ##################################################################
@@ -63,13 +78,19 @@ def add_features(df):
     df["created_year"] = df["created"].dt.year
     df["created_month"] = df["created"].dt.month
     df["created_day"] = df["created"].dt.day
+    df["created_hour"] = df["created"].dt.hour
+
+      
+    #df['price'] = df['price'].apply(np.log)
     
     for f in cat_feats:
         if df[f].dtype=='object':
             #print(f)
-            lbl = preprocessing.LabelEncoder()
-            lbl.fit(list(df[f].values))
-            df[f] = lbl.transform(list(df[f].values))
+            lbl = lbl_dict[f]
+            val = [x if x in lbl.classes_ else '_unknown_' for x in df[f].values]
+            # or alternatively: 
+            #val = [(lambda x: x if x in lbl.classes_ else '_unknown_')(x) for x in df[f].values]
+            df[f] = lbl.transform(val)
             
     return df
 
@@ -78,7 +99,8 @@ df = add_features(df)
 
 features_to_use = num_feats
 features_to_use.extend(["num_photos", "num_features", "num_description_words",
-             "created_year", "created_month", "created_day"])
+             "created_year", "created_month", "created_day",
+             "listing_id", "created_hour"])
 features_to_use.extend(cat_feats)
 
 def to_csr_mat(df):
@@ -94,9 +116,12 @@ X = to_csr_mat(df)
 target_num_map = {'high':0, 'medium':1, 'low':2}
 y = np.array(df['interest_level'].apply(lambda x: target_num_map[x]))
 
-X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=valid_size, random_state=seed)
-
+if (valid_size > 0):
+    X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=valid_size, random_state=seed)
+else:
+    X_train = X
+    y_train = y
 
 
 
@@ -112,7 +137,7 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     param['num_class'] = 3
     param['eval_metric'] = "mlogloss"
     param['min_child_weight'] = 1
-    param['subsample'] = 0.6
+    param['subsample'] = 0.7
     param['colsample_bytree'] = 0.7
     param['seed'] = seed_val
     param['seed'] = seed_val
@@ -150,10 +175,10 @@ for dev_index, val_index in kf.split(range(X_train.shape[0])):
 #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
 
 preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)
-val_score = log_loss(y_val, preds)
-
 print('CV score: log_loss = ' + str(np.mean(cv_scores)))
-print('Validation set: log_loss = ' + str(val_score))
+if (valid_size > 0):
+    val_score = log_loss(y_val, preds)
+    print('Validation set: log_loss = ' + str(val_score))
 
 
 
@@ -163,8 +188,6 @@ print('Validation set: log_loss = ' + str(val_score))
 # creating submission file
 ##################################################################
 if CREATE_SUBMISSION_FILE == True:
-    if LOAD_DATA == True:
-        test_df = pd.read_json(open("../input/test.json", "r"))
     test_df = add_features(test_df)
     X_test = to_csr_mat(test_df)
     #X_test = test_df[features_to_use]
@@ -172,5 +195,5 @@ if CREATE_SUBMISSION_FILE == True:
     out_df = pd.DataFrame(preds)
     out_df.columns = ["high", "medium", "low"]
     out_df["listing_id"] = test_df.listing_id.values
-    out_df.to_csv("../output/xgb_starter_2.csv", index=False)
+    out_df.to_csv("../output/xgb_starter_5.csv", index=False)
     

@@ -61,7 +61,7 @@ for f in cat_feats:
     if df[f].dtype=='object':
         #print(f)
         lbl = preprocessing.LabelEncoder()
-        lbl.fit(list(df[f].values))
+        lbl.fit(list(df[f].values) + list(test_df[f].values))
         lbl.classes_ = np.append(lbl.classes_, '_unknown_')
         lbl_dict[f] = lbl
 
@@ -170,6 +170,9 @@ for dev_index, val_index in kf.split(range(X_train.shape[0])):
     cv_scores.append(log_loss(val_y, preds))
     print(cv_scores)
 
+
+#[0.54812386254940737, 0.56365111773789167, 0.54652555619740395]
+#CV score: log_loss = 0.552766845495
 
 #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
 #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)

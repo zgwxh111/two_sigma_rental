@@ -39,7 +39,7 @@ cv_test_size = .3
 LOAD_DATA = True
 DO_CV = True
 # create submission file
-CREATE_SUBMISSION_FILE = True
+CREATE_SUBMISSION_FILE = False
 
 
 
@@ -50,7 +50,7 @@ CREATE_SUBMISSION_FILE = True
 ##################################################################
 # Adding features
 ##################################################################
-def add_features(df, lbl_dict):
+def add_features(df):
     df["num_photos"] = df["photos"].apply(len)
     df["num_features"] = df["features"].apply(len)
     df['features'] = df["features"].apply(lambda x: " ".join(["_".join(i.split(" ")) for i in x]))
@@ -66,7 +66,9 @@ def add_features(df, lbl_dict):
     df["bathrooms2"] = df["bathrooms"].apply(lambda x: x**2)
     
     #df['price'] = df['price'].apply(np.log)
-    
+    return df
+
+def encode_labels (df, lbl_dict, cat_feats):
     for f in cat_feats:
         if df[f].dtype=='object':
             print(f)
@@ -78,7 +80,6 @@ def add_features(df, lbl_dict):
             # or alternatively: 
             #val = [(lambda x: x if x in lbl.classes_ else '_unknown_')(x) for x in df[f].values]
             df[f] = lbl.transform(val)
-            
     return df
 
 def to_csr_mat(df1, df2, features_to_use):
@@ -92,7 +93,7 @@ def to_csr_mat(df1, df2, features_to_use):
     return X1, X2
 
 ##################################################################
-# Training function
+# Training functions
 ##################################################################
 def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=1000, verbose=True):
     param = {}
@@ -123,54 +124,66 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     return pred_test_y, model
 
 
-
+def crossval (X_train, y_train, Nfolds):
+    cv_scores = []
+    kf = KFold(n_splits=Nfolds, shuffle=True, random_state=seed)
+    for dev_index, val_index in kf.split(range(X_train.shape[0])):
+        dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
+        dev_y, val_y = y_train[dev_index], y_train[val_index]
+        preds, model = runXGB(dev_X, dev_y, val_X, val_y)
+        cv_scores.append(log_loss(val_y, preds))
+        print(cv_scores)
+    return cv_scores
+    
 
 
 ##################################################################
 # Loading the data
 ##################################################################
-if LOAD_DATA == True:
+
+def create_train_test_sets (preprocess = add_features):
     train_df = pd.read_json(open(data_path + "train.json", "r"))
     test_df = pd.read_json(open(data_path + "test.json", "r"))
 
+    num_feats = ["bathrooms", "bedrooms", "latitude", "longitude", "price",]
+    cat_feats = ["display_address", "manager_id", "building_id", "street_address"]
+    misc_feats = ["created", "display_address", "features", "photos"]
     
-num_feats = ["bathrooms", "bedrooms", "latitude", "longitude", "price",]
-cat_feats = ["display_address", "manager_id", "building_id", "street_address"]
-misc_feats = ["created", "display_address", "features", "photos"]
+    # Creating the label encoders
+    lbl_dict = {}
+    for f in cat_feats:
+        if train_df[f].dtype=='object':
+            #print(f)
+            lbl = preprocessing.LabelEncoder()
+            lbl.fit(list(train_df[f].values) + list(test_df[f].values))
+    #        lbl.classes_ = np.append(lbl.classes_, '_unknown_')
+            lbl_dict[f] = lbl
+    
+    train_df = preprocess(train_df)
+    train_df = encode_labels(train_df, lbl_dict, cat_feats)
+    test_df = preprocess(test_df)
+    test_df = encode_labels(test_df, lbl_dict, cat_feats)
 
-# Creating the label encoders
-lbl_dict = {}
-for f in cat_feats:
-    if train_df[f].dtype=='object':
-        #print(f)
-        lbl = preprocessing.LabelEncoder()
-        lbl.fit(list(train_df[f].values) + list(test_df[f].values))
-#        lbl.classes_ = np.append(lbl.classes_, '_unknown_')
-        lbl_dict[f] = lbl
-
-train_df = add_features(train_df, lbl_dict)
-test_df = add_features(test_df, lbl_dict)
-
-# features to use
-features_to_use = num_feats
-features_to_use.extend(["price2", "bedrooms2", "bathrooms2"])
-features_to_use.extend(["num_photos", "num_features", "num_description_words",
-             "created_year", "created_month", "created_day",
-             "listing_id", "created_hour"])
-features_to_use.extend(cat_feats)
-
-# compressed sparse row matrices
-X, X_test = to_csr_mat(train_df, test_df, features_to_use)
-#X = df[features_to_use]
-target_num_map = {'high':0, 'medium':1, 'low':2}
-y = np.array(train_df['interest_level'].apply(lambda x: target_num_map[x]))
-
-if (valid_size > 0):
-    X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=valid_size, random_state=seed)
-else:
-    X_train = X
-    y_train = y
+    # features to use
+    features_to_use = num_feats
+    features_to_use.extend(["price2", "bedrooms2", "bathrooms2"])
+    features_to_use.extend(["num_photos", "num_features", "num_description_words",
+                 "created_year", "created_month", "created_day",
+                 "listing_id", "created_hour"])
+    features_to_use.extend(cat_feats)
+    
+    # compressed sparse row matrices
+    X_train, X_test = to_csr_mat(train_df, test_df, features_to_use)
+    #X = df[features_to_use]
+    target_num_map = {'high':0, 'medium':1, 'low':2}
+    y_train = np.array(train_df['interest_level'].apply(lambda x: target_num_map[x]))
+    
+    return X_train, y_train, X_test
+    
+    
+if LOAD_DATA == True:
+    X_train, y_train, X_test = create_train_test_sets()
+    
 
 
 
@@ -179,19 +192,9 @@ else:
 # Cross validation 
 ##################################################################
 if DO_CV == True:
-    cv_scores = []
-    kf = KFold(n_splits=3, shuffle=True, random_state=seed)
-    for dev_index, val_index in kf.split(range(X_train.shape[0])):
-        dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
-        dev_y, val_y = y_train[dev_index], y_train[val_index]
-        preds, model = runXGB(dev_X, dev_y, val_X, val_y)
-        cv_scores.append(log_loss(val_y, preds))
-        print(cv_scores)
-        break
-    
+    cv_scores = crossval(X_train, y_train, 2)
     #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
     #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
-    
     print('CV score: log_loss = ' + str(np.mean(cv_scores)))
     if (valid_size > 0):
         preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)

@@ -9,20 +9,24 @@ Created on Mon Mar 13 18:22:30 2017
 import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 from sklearn import preprocessing
-from sklearn.model_selection import train_test_split, ShuffleSplit, cross_val_score
+from sklearn.model_selection import train_test_split, ShuffleSplit, cross_val_score, KFold
 from sklearn.metrics import log_loss
 import multiprocessing
 import xgboost as xgb
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from scipy import sparse
+import pickle # to save models into files
+import mypy1 as mp # custom functions
 
 
 # nb of processor cores
 n_cores = multiprocessing.cpu_count()
 # data path
-data_path = '../input'
+data_path = '../input/'
 # output files path
-output_files_path = '../output'
+output_path = '../output/'
+models_path = output_path + 'models/'
+predictions_path = output_path + 'predictions/'
 # random seed
 seed = 123
 # validation set size
@@ -33,6 +37,7 @@ cv_test_size = .3
 
 # load the data
 LOAD_DATA = True
+DO_CV = True
 # create submission file
 CREATE_SUBMISSION_FILE = True
 
@@ -40,36 +45,12 @@ CREATE_SUBMISSION_FILE = True
 
 
 
-##################################################################
-# Loading the data
-##################################################################
-if LOAD_DATA == True:
-    df = pd.read_json(open("../input/train.json", "r"))
-    test_df = pd.read_json(open("../input/test.json", "r"))
-
-    
-num_feats = ["bathrooms", "bedrooms", "latitude", "longitude", "price",]
-cat_feats = ["display_address", "manager_id", "building_id", "street_address"]
-misc_feats = ["created", "display_address", "features", "photos"]
-
-
-##################################################################
-# Creating the label encoders
-##################################################################
-lbl_dict = {}
-for f in cat_feats:
-    if df[f].dtype=='object':
-        #print(f)
-        lbl = preprocessing.LabelEncoder()
-        lbl.fit(list(df[f].values) + list(test_df[f].values))
-        lbl.classes_ = np.append(lbl.classes_, '_unknown_')
-        lbl_dict[f] = lbl
 
 
 ##################################################################
 # Adding features
 ##################################################################
-def add_features(df):
+def add_features(df, lbl_dict):
     df["num_photos"] = df["photos"].apply(len)
     df["num_features"] = df["features"].apply(len)
     df['features'] = df["features"].apply(lambda x: " ".join(["_".join(i.split(" ")) for i in x]))
@@ -80,50 +61,35 @@ def add_features(df):
     df["created_day"] = df["created"].dt.day
     df["created_hour"] = df["created"].dt.hour
 
-      
+    df["price2"] = df["price"].apply(lambda x: x**2)
+    df["bedrooms2"] = df["bedrooms"].apply(lambda x: x**2)
+    df["bathrooms2"] = df["bathrooms"].apply(lambda x: x**2)
+    
     #df['price'] = df['price'].apply(np.log)
     
     for f in cat_feats:
         if df[f].dtype=='object':
-            #print(f)
+            print(f)
             lbl = lbl_dict[f]
-            val = [x if x in lbl.classes_ else '_unknown_' for x in df[f].values]
+            #lbl = preprocessing.LabelEncoder()
+            #lbl.fit(list(train_df[f].values) + list(test_df[f].values))
+            val = list(df[f].values)
+            #val = [x if x in lbl.classes_ else '_unknown_' for x in df[f].values]
             # or alternatively: 
             #val = [(lambda x: x if x in lbl.classes_ else '_unknown_')(x) for x in df[f].values]
             df[f] = lbl.transform(val)
             
     return df
 
-
-df = add_features(df)
-
-features_to_use = num_feats
-features_to_use.extend(["num_photos", "num_features", "num_description_words",
-             "created_year", "created_month", "created_day",
-             "listing_id", "created_hour"])
-features_to_use.extend(cat_feats)
-
-def to_csr_mat(df):
+def to_csr_mat(df1, df2, features_to_use):
     tfidf = CountVectorizer(stop_words='english', max_features=200)
-    feat_sparse = tfidf.fit_transform(df["features"])
-    X = sparse.hstack([df[features_to_use], feat_sparse]).tocsr()
+    feat_sparse_1 = tfidf.fit_transform(df1["features"])
+    feat_sparse_2 = tfidf.transform(df2["features"])
+    X1 = sparse.hstack([df1[features_to_use], feat_sparse_1]).tocsr()
+    X2 = sparse.hstack([df2[features_to_use], feat_sparse_2]).tocsr()
     #desc_sparse = tfidf.fit_transform(df["description"])
     #X = sparse.hstack([df[features_to_use], feat_sparse, desc_sparse]).tocsr()
-    return X
-
-X = to_csr_mat(df)
-#X = df[features_to_use]
-target_num_map = {'high':0, 'medium':1, 'low':2}
-y = np.array(df['interest_level'].apply(lambda x: target_num_map[x]))
-
-if (valid_size > 0):
-    X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=valid_size, random_state=seed)
-else:
-    X_train = X
-    y_train = y
-
-
+    return X1, X2
 
 ##################################################################
 # Training function
@@ -139,7 +105,6 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     param['min_child_weight'] = 1
     param['subsample'] = 0.7
     param['colsample_bytree'] = 0.7
-    param['seed'] = seed_val
     param['seed'] = seed_val
     num_rounds = num_rounds
 
@@ -158,30 +123,80 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     return pred_test_y, model
 
 
+
+
+
+##################################################################
+# Loading the data
+##################################################################
+if LOAD_DATA == True:
+    train_df = pd.read_json(open(data_path + "train.json", "r"))
+    test_df = pd.read_json(open(data_path + "test.json", "r"))
+
+    
+num_feats = ["bathrooms", "bedrooms", "latitude", "longitude", "price",]
+cat_feats = ["display_address", "manager_id", "building_id", "street_address"]
+misc_feats = ["created", "display_address", "features", "photos"]
+
+# Creating the label encoders
+lbl_dict = {}
+for f in cat_feats:
+    if train_df[f].dtype=='object':
+        #print(f)
+        lbl = preprocessing.LabelEncoder()
+        lbl.fit(list(train_df[f].values) + list(test_df[f].values))
+#        lbl.classes_ = np.append(lbl.classes_, '_unknown_')
+        lbl_dict[f] = lbl
+
+train_df = add_features(train_df, lbl_dict)
+test_df = add_features(test_df, lbl_dict)
+
+# features to use
+features_to_use = num_feats
+features_to_use.extend(["price2", "bedrooms2", "bathrooms2"])
+features_to_use.extend(["num_photos", "num_features", "num_description_words",
+             "created_year", "created_month", "created_day",
+             "listing_id", "created_hour"])
+features_to_use.extend(cat_feats)
+
+# compressed sparse row matrices
+X, X_test = to_csr_mat(train_df, test_df, features_to_use)
+#X = df[features_to_use]
+target_num_map = {'high':0, 'medium':1, 'low':2}
+y = np.array(train_df['interest_level'].apply(lambda x: target_num_map[x]))
+
+if (valid_size > 0):
+    X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=valid_size, random_state=seed)
+else:
+    X_train = X
+    y_train = y
+
+
+
+
 ##################################################################
 # Cross validation 
 ##################################################################
-cv_scores = []
-kf = KFold(n_splits=3, shuffle=True, random_state=seed)
-for dev_index, val_index in kf.split(range(X_train.shape[0])):
-    dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
-    dev_y, val_y = y_train[dev_index], y_train[val_index]
-    preds, model = runXGB(dev_X, dev_y, val_X, val_y)
-    cv_scores.append(log_loss(val_y, preds))
-    print(cv_scores)
-
-
-#[0.54812386254940737, 0.56365111773789167, 0.54652555619740395]
-#CV score: log_loss = 0.552766845495
-
-#cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
-#cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
-
-preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)
-print('CV score: log_loss = ' + str(np.mean(cv_scores)))
-if (valid_size > 0):
-    val_score = log_loss(y_val, preds)
-    print('Validation set: log_loss = ' + str(val_score))
+if DO_CV == True:
+    cv_scores = []
+    kf = KFold(n_splits=3, shuffle=True, random_state=seed)
+    for dev_index, val_index in kf.split(range(X_train.shape[0])):
+        dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
+        dev_y, val_y = y_train[dev_index], y_train[val_index]
+        preds, model = runXGB(dev_X, dev_y, val_X, val_y)
+        cv_scores.append(log_loss(val_y, preds))
+        print(cv_scores)
+        break
+    
+    #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
+    #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
+    
+    print('CV score: log_loss = ' + str(np.mean(cv_scores)))
+    if (valid_size > 0):
+        preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)
+        val_score = log_loss(y_val, preds)
+        print('Validation set: log_loss = ' + str(val_score))
 
 
 
@@ -191,12 +206,19 @@ if (valid_size > 0):
 # creating submission file
 ##################################################################
 if CREATE_SUBMISSION_FILE == True:
-    test_df = add_features(test_df)
-    X_test = to_csr_mat(test_df)
-    #X_test = test_df[features_to_use]
+    # make predictions
     preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
     out_df = pd.DataFrame(preds)
     out_df.columns = ["high", "medium", "low"]
     out_df["listing_id"] = test_df.listing_id.values
-    out_df.to_csv("../output/xgb_starter_5.csv", index=False)
+    
+    # extension for saved files
+    date = mp.strdate()
+    extension = date
+    if DO_CV == True:
+        extension += '_CV_' + str(round(np.mean(cv_scores), 5))
+
+    # save files
+    out_df.to_csv(predictions_path + "xgb1" + extension + ".csv", index=False)
+    pickle.dump(model, open(models_path + "xgb1" + extension + ".dat", "wb"))
     

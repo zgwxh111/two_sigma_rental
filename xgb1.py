@@ -183,6 +183,28 @@ def create_train_test_sets (preprocess = add_features, features_to_add = None):
     
     
 
+##################################################################
+# Output files saving
+##################################################################
+def create_output_files (X_train, y_train, X_test, cv_scores = None, num_rounds=400):
+    # make predictions
+    preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
+    out_df = pd.DataFrame(preds)
+    out_df.columns = ["high", "medium", "low"]
+    out_df["listing_id"] = test_df.listing_id.values
+    
+    # extension for saved files
+    date = mp.strdate()
+    extension = date
+    if DO_CV == True:
+        if cv_scores is not None:
+            extension += '_CV_' + str(round(np.mean(cv_scores), 5))
+
+    # save files
+    out_df.to_csv(predictions_path + "xgb1" + extension + ".csv", index=False)
+    pickle.dump(model, open(models_path + "xgb1" + extension + ".dat", "wb"))
+
+
 
 
 
@@ -208,21 +230,8 @@ if DO_CV == True:
         print('Validation set: log_loss = ' + str(val_score))
 
 
-# creating submission file
-if CREATE_SUBMISSION_FILE == True:
-    # make predictions
-    preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
-    out_df = pd.DataFrame(preds)
-    out_df.columns = ["high", "medium", "low"]
-    out_df["listing_id"] = test_df.listing_id.values
-    
-    # extension for saved files
-    date = mp.strdate()
-    extension = date
-    if DO_CV == True:
-        extension += '_CV_' + str(round(np.mean(cv_scores), 5))
 
-    # save files
-    out_df.to_csv(predictions_path + "xgb1" + extension + ".csv", index=False)
-    pickle.dump(model, open(models_path + "xgb1" + extension + ".dat", "wb"))
+# creating output file
+if CREATE_SUBMISSION_FILE == True:
+    create_output_files(X_train, y_train, X_test, cv_scores, num_rounds=400)
     

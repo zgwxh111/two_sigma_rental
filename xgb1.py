@@ -60,10 +60,6 @@ def add_features(df):
     df["created_month"] = df["created"].dt.month
     df["created_day"] = df["created"].dt.day
     df["created_hour"] = df["created"].dt.hour
-
-    df["price2"] = df["price"].apply(lambda x: x**2)
-    df["bedrooms2"] = df["bedrooms"].apply(lambda x: x**2)
-    df["bathrooms2"] = df["bathrooms"].apply(lambda x: x**2)
     
     #df['price'] = df['price'].apply(np.log)
     return df
@@ -71,7 +67,7 @@ def add_features(df):
 def encode_labels (df, lbl_dict, cat_feats):
     for f in cat_feats:
         if df[f].dtype=='object':
-            print(f)
+            #print(f)
             lbl = lbl_dict[f]
             #lbl = preprocessing.LabelEncoder()
             #lbl.fit(list(train_df[f].values) + list(test_df[f].values))
@@ -87,13 +83,14 @@ def to_csr_mat(df1, df2, features_to_use):
     feat_sparse_1 = tfidf.fit_transform(df1["features"])
     feat_sparse_2 = tfidf.transform(df2["features"])
     X1 = sparse.hstack([df1[features_to_use], feat_sparse_1]).tocsr()
-    X2 = sparse.hstack([df2[features_to_use], feat_sparse_2]).tocsr()
+    X2 = sparse.hstack([df2[features_to_use], feat_sparse_2]).tocsr()    
     #desc_sparse = tfidf.fit_transform(df["description"])
     #X = sparse.hstack([df[features_to_use], feat_sparse, desc_sparse]).tocsr()
     return X1, X2
 
+
 ##################################################################
-# Training functions
+# Training function
 ##################################################################
 def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=1000, verbose=True):
     param = {}
@@ -124,6 +121,9 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     return pred_test_y, model
 
 
+##################################################################
+# Cross validation 
+##################################################################
 def crossval (X_train, y_train, Nfolds):
     cv_scores = []
     kf = KFold(n_splits=Nfolds, shuffle=True, random_state=seed)
@@ -138,10 +138,9 @@ def crossval (X_train, y_train, Nfolds):
 
 
 ##################################################################
-# Loading the data
+# Data processing
 ##################################################################
-
-def create_train_test_sets (preprocess = add_features):
+def create_train_test_sets (preprocess = add_features, features_to_add = None):
     train_df = pd.read_json(open(data_path + "train.json", "r"))
     test_df = pd.read_json(open(data_path + "test.json", "r"))
 
@@ -166,11 +165,13 @@ def create_train_test_sets (preprocess = add_features):
 
     # features to use
     features_to_use = num_feats
-    features_to_use.extend(["price2", "bedrooms2", "bathrooms2"])
+    #features_to_use.extend(["price2", "bedrooms2", "bathrooms2"])
     features_to_use.extend(["num_photos", "num_features", "num_description_words",
                  "created_year", "created_month", "created_day",
                  "listing_id", "created_hour"])
     features_to_use.extend(cat_feats)
+    if features_to_add is not None:
+        features_to_use.extend(features_to_add)
     
     # compressed sparse row matrices
     X_train, X_test = to_csr_mat(train_df, test_df, features_to_use)
@@ -181,16 +182,21 @@ def create_train_test_sets (preprocess = add_features):
     return X_train, y_train, X_test
     
     
+
+
+
+
+##################################################################
+# MAIN
+##################################################################
+
+
+# Load the data
 if LOAD_DATA == True:
     X_train, y_train, X_test = create_train_test_sets()
     
 
-
-
-
-##################################################################
-# Cross validation 
-##################################################################
+# Cross validation
 if DO_CV == True:
     cv_scores = crossval(X_train, y_train, 2)
     #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
@@ -202,12 +208,7 @@ if DO_CV == True:
         print('Validation set: log_loss = ' + str(val_score))
 
 
-
-
-
-##################################################################
 # creating submission file
-##################################################################
 if CREATE_SUBMISSION_FILE == True:
     # make predictions
     preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)

@@ -16,7 +16,12 @@ import xgboost as xgb
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from scipy import sparse
 import pickle # to save models into files
+
+import sys
+if '/Users/antoinemovschin/Documents/python/' not in sys.path:
+    sys.path.append("/Users/antoinemovschin/Documents/python/")
 import mypy1 as mp # custom functions
+
 
 
 # nb of processor cores
@@ -37,7 +42,7 @@ cv_test_size = .3
 
 # load the data
 LOAD_DATA = True
-DO_CV = True
+DO_CV = False
 # create submission file
 CREATE_SUBMISSION_FILE = False
 
@@ -62,6 +67,18 @@ def add_features(df):
     df["created_hour"] = df["created"].dt.hour
     
     #df['price'] = df['price'].apply(np.log)
+    return df
+
+def add_priceoverbedbath (df):
+    df = add_features(df)
+    df["price_over_bedbath"] = df['price'] / (df['bathrooms'] + df['bedrooms'])
+    df["price_over_bedbath"] = [ np.min([1000000, x]) for x in df['price_over_bedbath'] ]
+    return df
+
+def add_priceoverbedbath_priceoverbed (df):
+    df = add_priceoverbedbath(df)
+    df["price_over_bed"] = df['price'] / df['bedrooms']
+    df["price_over_bed"] = [ np.min([1000000, x]) for x in df['price_over_bed'] ]
     return df
 
 def encode_labels (df, lbl_dict, cat_feats):
@@ -215,7 +232,10 @@ def create_output_files (X_train, y_train, X_test, cv_scores = None, num_rounds=
 
 # Load the data
 if LOAD_DATA == True:
-    X_train, y_train, X_test = create_train_test_sets()
+    #X_train, y_train, X_test = create_train_test_sets()
+    X_train, y_train, X_test = create_train_test_sets(
+            preprocess = add_priceoverbedbath_priceoverbed, 
+            features_to_add = ["price_over_bedbath", "price_over_bed"])
     
 
 # Cross validation

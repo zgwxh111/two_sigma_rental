@@ -22,8 +22,6 @@ if '/Users/antoinemovschin/Documents/python/' not in sys.path:
     sys.path.append("/Users/antoinemovschin/Documents/python/")
 import mypy1 as mp # custom functions
 
-from xgb1 import crossval, runXGB
-
 
 # nb of processor cores
 n_cores = multiprocessing.cpu_count()
@@ -43,9 +41,9 @@ cv_test_size = .3
 
 # load the data
 LOAD_DATA = True
-DO_CV = False
+DO_CV = True
 # create submission file
-CREATE_SUBMISSION_FILE = False
+CREATE_SUBMISSION_FILE = True
 
 
 
@@ -183,6 +181,54 @@ def create_train_test_sets (train_df, test_df):
     return X_train, y_train, X_test
     
 
+
+##################################################################
+# Training function
+##################################################################
+def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=1000, verbose=True):
+    param = {}
+    param['objective'] = 'multi:softprob'
+    param['eta'] = 0.1
+    param['max_depth'] = 6
+    param['silent'] = 1
+    param['num_class'] = 3
+    param['eval_metric'] = "mlogloss"
+    param['min_child_weight'] = 1
+    param['subsample'] = 0.7
+    param['colsample_bytree'] = 0.7
+    param['seed'] = seed_val
+    num_rounds = num_rounds
+
+    plst = list(param.items())
+    xgtrain = xgb.DMatrix(train_X, label=train_y)
+
+    if test_y is not None:
+        xgtest = xgb.DMatrix(test_X, label=test_y)
+        watchlist = [ (xgtrain,'train'), (xgtest, 'test') ]
+        model = xgb.train(plst, xgtrain, num_rounds, watchlist, early_stopping_rounds=20, verbose_eval=verbose)
+    else:
+        xgtest = xgb.DMatrix(test_X)
+        model = xgb.train(plst, xgtrain, num_rounds, verbose_eval=verbose)
+
+    pred_test_y = model.predict(xgtest)
+    return pred_test_y, model
+
+
+##################################################################
+# Cross validation 
+##################################################################
+def crossval (X_train, y_train, Nfolds):
+    cv_scores = []
+    kf = KFold(n_splits=Nfolds, shuffle=True, random_state=seed)
+    for dev_index, val_index in kf.split(range(X_train.shape[0])):
+        dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
+        dev_y, val_y = y_train[dev_index], y_train[val_index]
+        preds, model = runXGB(dev_X, dev_y, val_X, val_y)
+        cv_scores.append(log_loss(val_y, preds))
+        print(cv_scores)
+    return cv_scores
+
+
 ##################################################################
 # Output files saving
 ##################################################################
@@ -237,5 +283,5 @@ if DO_CV == True:
 # creating output file
 if CREATE_SUBMISSION_FILE == True:
     test_listing_id = test_df['listing_id'].values
-    create_output_files(X_train, y_train, X_test, cv_scores, num_rounds=400)
+    create_output_files(X_train, y_train, X_test, test_listing_id, cv_scores, num_rounds=400)
     

@@ -22,7 +22,7 @@ if '/Users/antoinemovschin/Documents/python/' not in sys.path:
     sys.path.append("/Users/antoinemovschin/Documents/python/")
 import mypy1 as mp # custom functions
 
-from xgb1 import crossval, runXGB, create_output_files
+from xgb1 import crossval, runXGB
 
 
 # nb of processor cores
@@ -182,6 +182,29 @@ def create_train_test_sets (train_df, test_df):
     
     return X_train, y_train, X_test
     
+
+##################################################################
+# Output files saving
+##################################################################
+def create_output_files (X_train, y_train, X_test, test_listing_id, cv_scores = None, num_rounds=400):
+    # make predictions
+    preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
+    out_df = pd.DataFrame(preds)
+    out_df.columns = ["high", "medium", "low"]
+    out_df["listing_id"] = test_listing_id
+    
+    # extension for saved files
+    date = mp.strdate()
+    extension = date
+    if DO_CV == True:
+        if cv_scores is not None:
+            extension += '_CV_' + str(round(np.mean(cv_scores), 5))
+
+    # save files
+    out_df.to_csv(predictions_path + "xgb3" + extension + ".csv", index=False)
+    pickle.dump(model, open(models_path + "xgb3" + extension + ".dat", "wb"))
+
+
 
 
 ##################################################################

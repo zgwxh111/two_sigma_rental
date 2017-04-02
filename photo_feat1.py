@@ -25,9 +25,16 @@ def get_photo_features(df):
     features['percent75'] = np.zeros((nrows,))
     
     err_list = np.zeros((nrows,))
+    err_list[:] = -1
 
     #for n in range(df.shape[0]):
-    for n in range(nrows):
+    for n in range(64085, df.shape[0]):
+        if n % 1000 == 0:
+            # sauvegarde tous les 1000 annonces
+            df_features = pd.DataFrame(features)
+            directory = '../input/photo_features/'
+            date = mp.strdate()
+            df_features.to_csv(directory + "df_photo_features" + date + ".csv", index=False)
         if n % 100 == 0:
             print ('processing photos ... ' + str(n) + ' / ' + str(df.shape[0]))
         # list of photo URLs
@@ -139,14 +146,22 @@ if __name__ == '__main__':
     directory = '../input/photo_features/'
 
     train_df = pd.read_json(open(data_path + "train.json", "r"))
-    train_features = get_photo_features(train_df)
+    train_ft = get_photo_features(train_df)
+    train_features = pd.DataFrame(train_ft)
     date = mp.strdate()
     train_features.to_csv(directory + "train_photo_features" + date + ".csv", index=False)
 
     test_df = pd.read_json(open(data_path + "test.json", "r"))
-    test_features = get_photo_features(train_df)
+    test_ft = get_photo_features(train_df)
+    test_features = pd.DataFrame(test_ft)
     date = mp.strdate()
     test_features.to_csv(directory + "test_photo_features" + date + ".csv", index=False)
 
-        
 
+#trerr = [16193, 22480, 25711, 28352, 28801, 29541,
+#         38009, 38336, 39480, 40362, 40373, 40812, 
+#         40813, 40814, 40821, 40831, 40854, 43646, 
+#         44277, 44611, 44816, 44819, 44822, 45170, 
+#         45181, 45619, 45625, 45737, 45791, 46116, 
+#         46219, 46958, 47064, 47290, 47353, 47436, 
+#         48046, 48623, 48798, 48963, 49033, 49313]

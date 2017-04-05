@@ -16,6 +16,7 @@ import xgboost as xgb
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from scipy import sparse
 import pickle # to save models into files
+from itertools import product
 
 import sys
 if '/Users/antoinemovschin/Documents/python/' not in sys.path:
@@ -68,6 +69,9 @@ def add_features_0(df):
     df["created_hour"] = df["created"].dt.hour
     
     #df['price'] = df['price'].apply(np.log)
+    
+    df = df.fillna(-1).replace(np.inf, -1)
+    
     return df
 
 def add_priceoverbedbath (df):
@@ -123,8 +127,8 @@ def designate_single_observations(df1, df2, column):
 ##################################################################
 def preprocess (train_df, test_df):
     # add features
-    train_df = add_features_0(train_df)
-    test_df = add_features_0(test_df)
+    train_df = add_priceoverbedbath_priceoverbed(train_df)
+    test_df = add_priceoverbedbath_priceoverbed(test_df)
     
     train_df = train_df.replace({"interest_level": {"low": 0, "medium": 1, "high": 2}})
     train_df = train_df.join(pd.get_dummies(train_df["interest_level"], prefix="pred").astype(int))
@@ -133,8 +137,10 @@ def preprocess (train_df, test_df):
     # handle signe observations
     for col in ('building_id', 'manager_id', 'display_address'):
         train_df, test_df = designate_single_observations(train_df, test_df, col)
+
+    np.random.seed(123)
     # High-Cardinality Categorical encoding
-    skf = StratifiedKFold(5)
+    skf = StratifiedKFold(5, random_state = 123)
     attributes = product(("building_id", "manager_id"), zip(("pred_1", "pred_2"), (prior_1, prior_2)))
     for variable, (target, prior) in attributes:
         hcc_encode(train_df, test_df, variable, target, prior, k=5, r_k=None)
@@ -153,7 +159,7 @@ def create_train_test_sets (train_df, test_df):
     for f in cat_feats:
         if train_df[f].dtype=='object':
             lbl = preprocessing.LabelEncoder()
-            lbl.fit(list(train_df[f].values) + list(test_df[f].values))
+            lbl.fit(list(train_df[f]) + list(test_df[f]))
             train_df[f] = lbl.transform(list(train_df[f].values))
             test_df[f] = lbl.transform(list(test_df[f].values))
     
@@ -164,17 +170,17 @@ def create_train_test_sets (train_df, test_df):
                    'photos',
                    'features',
                    'description',
-                   'display_address', 
+#                   'display_address', 
                    ]
     for c in remove_list:
         features_to_use.remove(c)
                                    
     tfidf = CountVectorizer(stop_words='english', max_features=200)
-    feat_sparse_1 = tfidf.fit_transform(train_df["features"])
-    feat_sparse_2 = tfidf.transform(test_df["features"])
+    feat_sparse_train = tfidf.fit_transform(train_df["features"])
+    feat_sparse_test = tfidf.transform(test_df["features"])
     # compressed sparse row matrices
-    X_train = sparse.hstack([train_df[features_to_use], feat_sparse_1]).tocsr()
-    X_test = sparse.hstack([test_df[features_to_use], feat_sparse_2]).tocsr()    
+    X_train = sparse.hstack([train_df[features_to_use], feat_sparse_train]).tocsr()
+    X_test = sparse.hstack([test_df[features_to_use], feat_sparse_test]).tocsr()    
 
     y_train = np.array(train_df['interest_level'])
     
@@ -234,9 +240,9 @@ def crossval (X_train, y_train, Nfolds):
 ##################################################################
 def create_output_files (X_train, y_train, X_test, test_listing_id, cv_scores = None, num_rounds=400):
     # make predictions
-    preds, model = runXGB(X_train, y_train, X_test, num_rounds=400)
+    preds, model = runXGB(X_train, y_train, X_test, num_rounds=num_rounds)
     out_df = pd.DataFrame(preds)
-    out_df.columns = ["high", "medium", "low"]
+    out_df.columns = ["low", "medium", "high"]
     out_df["listing_id"] = test_listing_id
     
     # extension for saved files
@@ -260,8 +266,8 @@ def create_output_files (X_train, y_train, X_test, test_listing_id, cv_scores = 
 
 # Load the data
 if LOAD_DATA == True:
-    train_df = pd.read_json(open(data_path + "train.json", "r"))
-    test_df = pd.read_json(open(data_path + "test.json", "r"))
+    train_df = pd.read_json(open(data_path + "train.json", "r")).sort_values(by="listing_id")
+    test_df = pd.read_json(open(data_path + "test.json", "r")).sort_values(by="listing_id")
     
     train_df, test_df = preprocess(train_df, test_df)
     X_train, y_train, X_test = create_train_test_sets(train_df, test_df)

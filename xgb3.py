@@ -18,6 +18,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from scipy import sparse
 import pickle # to save models into files
 from itertools import product
+from collections import Counter
+import string
 
 import sys
 if '/Users/antoinemovschin/Documents/python/' not in sys.path:
@@ -62,7 +64,6 @@ def add_features_0(df):
     #fmt = lambda feat: [s.replace("\u00a0", "").strip().lower().replace(" ", "_") for s in feat]  # format features
     fmt = lambda x: " ".join(["_".join(i.split(" ")) for i in x])
     df["features"] = df["features"].apply(fmt)
-    df["num_description_words"] = df["description"].apply(lambda x: len(x.split(" ")))
     df["created"] = pd.to_datetime(df["created"])
     df["created_year"] = df["created"].dt.year
     df["created_month"] = df["created"].dt.month
@@ -76,25 +77,50 @@ def add_features_0(df):
     return df
 
 def add_priceoverbedbath (df):
-    df = add_features_0(df)
     df["price_over_bedbath"] = df['price'] / (df['bathrooms'] + df['bedrooms'] + 1)
     df["price_over_bedbath"] = [ np.min([1000000, x]) for x in df['price_over_bedbath'] ]
     return df
 
-def add_priceoverbedbath_priceoverbed (df):
-    df = add_priceoverbedbath(df)
+def add_priceoverbed (df):
     df["price_over_bed"] = df['price'] / (df['bedrooms'] + 1)
     df["price_over_bed"] = [ np.min([1000000, x]) for x in df['price_over_bed'] ]
     return df
 
-def add_priceoverbedbath_priceoverbed_priceoverbath (df):
-    df = add_priceoverbedbath_priceoverbed(df)
+def add_priceoverbath (df):
     df["price_over_bath"] = df['price'] / (df['bathrooms'] + 1)
     df["price_over_bath"] = [ np.min([1000000, x]) for x in df['price_over_bath'] ]
     return df
 
-
+def process_description(df):
+    df['desc_num_words'] = df['description'].apply(lambda x: len(x.split(" ")))
+    df['desc_len'] = df['description'].apply(len)
+    fct_punctuation = lambda st: sum([v for k,v in Counter(st).iteritems() if k in string.punctuation])
+    df['desc_punctuation_count'] = df['description'].apply(fct_punctuation)
+    fct_punct_restr = lambda st: sum([v for k,v in Counter(st).iteritems() if k in '.;:,?!'])
+    df['desc_punct_restr_count'] = df['description'].apply(fct_punct_restr)
+    fct_uppercase = lambda st: sum([v for k,v in Counter(st).iteritems() if k in string.uppercase])
+    df['desc_uppercase_count'] = df['description'].apply(fct_uppercase)
+    fct_digits = lambda st: sum([v for k,v in Counter(st).iteritems() if k in string.digits])
+    df['desc_digits_count'] = df['description'].apply(fct_digits)
+    fct_whitespace = lambda st: sum([v for k,v in Counter(st).iteritems() if k in string.whitespace])
+    df['desc_whitespace_count'] = df['description'].apply(fct_whitespace)
     
+    df['desc_punct_ratio'] = df['desc_punctuation_count'] / df['desc_num_words']
+    df['desc_punct_restr_ratio'] = df['desc_punct_restr_count'] / df['desc_num_words']
+    df['desc_uppercase_ratio'] = df['desc_uppercase_count'] / df['desc_len']
+    df['desc_digits_ratio'] = df['desc_digits_count'] / df['desc_len']
+    df['desc_whitespace_ratio'] = df['desc_whitespace_count'] / df['desc_num_words']
+    df['desc_mean_len_words'] = df['desc_len'] / df['desc_num_words']
+
+    return df
+    
+def add_features(df):
+    df = add_features_0(df)
+    df = add_priceoverbedbath(df)
+    df = add_priceoverbed(df)
+    df = add_priceoverbath(df)
+    df = process_description(df)
+    return df
 
 ##################################################################
 # Handle high cardinality categorical features
@@ -149,8 +175,8 @@ def rename_photo_features(df):
 
 def preprocess (train_df, test_df):
     # add features
-    train_df = add_priceoverbedbath_priceoverbed_priceoverbath(train_df)
-    test_df = add_priceoverbedbath_priceoverbed_priceoverbath(test_df)
+    train_df = add_features(train_df)
+    test_df = add_features(test_df)
     
     # add photos features
     train_photo_feat_file = data_path + '/photo_features/train_photo_features_20170402_125215.csv'

@@ -11,6 +11,7 @@ import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split, ShuffleSplit, cross_val_score, KFold, StratifiedKFold
 from sklearn.metrics import log_loss
+from sklearn.linear_model import LinearRegression
 import multiprocessing
 import xgboost as xgb
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
@@ -86,6 +87,13 @@ def add_priceoverbedbath_priceoverbed (df):
     df["price_over_bed"] = [ np.min([1000000, x]) for x in df['price_over_bed'] ]
     return df
 
+def add_priceoverbedbath_priceoverbed_priceoverbath (df):
+    df = add_priceoverbedbath_priceoverbed(df)
+    df["price_over_bath"] = df['price'] / (df['bathrooms'] + 1)
+    df["price_over_bath"] = [ np.min([1000000, x]) for x in df['price_over_bath'] ]
+    return df
+
+
     
 
 ##################################################################
@@ -125,10 +133,34 @@ def designate_single_observations(df1, df2, column):
 ##################################################################
 # Data processing
 ##################################################################
+
+def rename_photo_features(df):
+    df['photos_size'] = df['size']
+    df['photos_minval'] = df['mini']
+    df['photos_maxval'] = df['maxi']
+    df['photos_mean'] = df['mean']
+    df['photos_std'] = df['std']
+    df['photos_median'] = df['median']
+    df['photos_percentile25'] = df['percent25']       
+    df['photos_percentile75'] = df['percent75']
+    for c in ['size', 'mini', 'maxi', 'mean', 'std', 'median', 'percent25', 'percent75']:
+        del df[c]
+    return df
+
 def preprocess (train_df, test_df):
     # add features
-    train_df = add_priceoverbedbath_priceoverbed(train_df)
-    test_df = add_priceoverbedbath_priceoverbed(test_df)
+    train_df = add_priceoverbedbath_priceoverbed_priceoverbath(train_df)
+    test_df = add_priceoverbedbath_priceoverbed_priceoverbath(test_df)
+    
+    # add photos features
+    train_photo_feat_file = data_path + '/photo_features/train_photo_features_20170402_125215.csv'
+    test_photo_feat_file = data_path + '/photo_features/test_photo_features_20170402_222303.csv'
+    trpf = pd.read_csv(train_photo_feat_file)
+    rename_photo_features(trpf)
+    tepf = pd.read_csv(test_photo_feat_file)
+    rename_photo_features(tepf)
+    train_df.append(trpf)
+    test_df.append(tepf)
     
     train_df = train_df.replace({"interest_level": {"low": 0, "medium": 1, "high": 2}})
     train_df = train_df.join(pd.get_dummies(train_df["interest_level"], prefix="pred").astype(int))
@@ -191,11 +223,11 @@ def create_train_test_sets (train_df, test_df):
 ##################################################################
 # Training function
 ##################################################################
-def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=1000, verbose=True):
+def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True):
     param = {}
     param['objective'] = 'multi:softprob'
-    param['eta'] = 0.1
-    param['max_depth'] = 6
+    param['eta'] = 0.02
+    param['max_depth'] = 4
     param['silent'] = 1
     param['num_class'] = 3
     param['eval_metric'] = "mlogloss"
@@ -217,19 +249,46 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
         model = xgb.train(plst, xgtrain, num_rounds, verbose_eval=verbose)
 
     pred_test_y = model.predict(xgtest)
+    
+    return pred_test_y, model
+
+
+def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True):
+    pred_test_y, model = runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True)
+    
+    # Linear regression : listing_id = f(created)
+    x = train_df['created'].astype(int).values[:,np.newaxis]
+    y = train_df['listing_id'].values
+    lr = LinearRegression()
+    lr.fit(x,y)
+    
+    cr = test_df['created'].astype(int).values[:,np.newaxis]
+    lid = test_df['listing_id'].values
+    d = lid - lr.predict(cr)
+    
+    preds = pd.DataFrame(pred_test_y)
+    preds["d"] = d
+    preds.loc[pr['d'] > 250000, 0] = 1
+    preds.loc[pr['d'] > 250000, 1] = 0
+    preds.loc[pr['d'] > 250000, 2] = 0
+    del preds["d"]
+    pred_test_y = preds.values
+
     return pred_test_y, model
 
 
 ##################################################################
 # Cross validation 
 ##################################################################
-def crossval (X_train, y_train, Nfolds):
+def crossval (train_df, test_df, X_train, y_train, Nfolds):
     cv_scores = []
     kf = KFold(n_splits=Nfolds, shuffle=True, random_state=seed)
     for dev_index, val_index in kf.split(range(X_train.shape[0])):
         dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
         dev_y, val_y = y_train[dev_index], y_train[val_index]
-        preds, model = runXGB(dev_X, dev_y, val_X, val_y)
+        dev_X_df = train_df.ix[dev_index]
+        val_X_df = train_df.ix[val_index]
+        preds, model = predictXGB(dev_X_df, val_X_df, dev_X, dev_y, val_X, val_y)
         cv_scores.append(log_loss(val_y, preds))
         print(cv_scores)
     return cv_scores
@@ -238,12 +297,12 @@ def crossval (X_train, y_train, Nfolds):
 ##################################################################
 # Output files saving
 ##################################################################
-def create_output_files (X_train, y_train, X_test, test_listing_id, cv_scores = None, num_rounds=400):
+def create_output_files (train_df, test_df, X_train, y_train, X_test, test_listing_id, cv_scores = None, num_rounds=400):
     # make predictions
-    preds, model = runXGB(X_train, y_train, X_test, num_rounds=num_rounds)
+    preds, model = predictXGB(train_df, test_df, X_train, y_train, X_test, num_rounds=num_rounds)
     out_df = pd.DataFrame(preds)
     out_df.columns = ["low", "medium", "high"]
-    out_df["listing_id"] = test_listing_id
+    out_df["listing_id"] = test_df['listing_id'].values
     
     # extension for saved files
     date = mp.strdate()
@@ -275,12 +334,12 @@ if LOAD_DATA == True:
 
 # Cross validation
 if DO_CV == True:
-    cv_scores = crossval(X_train, y_train, 2)
+    cv_scores = crossval(train_df, test_df, X_train, y_train, 5)
     #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
     #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
     print('CV score: log_loss = ' + str(np.mean(cv_scores)))
     if (valid_size > 0):
-        preds, model = runXGB(X_train, y_train, X_val, num_rounds=400)
+        preds, model = predictXGB(train_df, test_df, X_train, y_train, X_val, num_rounds=2000)
         val_score = log_loss(y_val, preds)
         print('Validation set: log_loss = ' + str(val_score))
 
@@ -288,6 +347,5 @@ if DO_CV == True:
 
 # creating output file
 if CREATE_SUBMISSION_FILE == True:
-    test_listing_id = test_df['listing_id'].values
-    create_output_files(X_train, y_train, X_test, test_listing_id, cv_scores, num_rounds=400)
+    create_output_files(train_df, test_df, X_train, y_train, X_test, test_listing_id, cv_scores, num_rounds=2000)
     

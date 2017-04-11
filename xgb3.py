@@ -254,7 +254,8 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
 
 
 def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True):
-    pred_test_y, model = runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True)
+    
+    pred_test_y, model = runXGB(train_X, train_y, test_X, test_y=test_y, feature_names=feature_names, seed_val=seed_val, num_rounds=num_rounds, verbose=verbose)
     
     # Linear regression : listing_id = f(created)
     x = train_df['created'].astype(int).values[:,np.newaxis]
@@ -267,11 +268,11 @@ def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature
     d = lid - lr.predict(cr)
     
     preds = pd.DataFrame(pred_test_y)
-    preds["d"] = d
-    preds.loc[pr['d'] > 250000, 0] = 1
-    preds.loc[pr['d'] > 250000, 1] = 0
-    preds.loc[pr['d'] > 250000, 2] = 0
-    del preds["d"]
+    preds['d'] = d
+    preds.loc[preds['d'] > 250000, 0] = 1
+    preds.loc[preds['d'] > 250000, 1] = 0
+    preds.loc[preds['d'] > 250000, 2] = 0
+    del preds['d']
     pred_test_y = preds.values
 
     return pred_test_y, model
@@ -286,8 +287,8 @@ def crossval (train_df, test_df, X_train, y_train, Nfolds):
     for dev_index, val_index in kf.split(range(X_train.shape[0])):
         dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
         dev_y, val_y = y_train[dev_index], y_train[val_index]
-        dev_X_df = train_df.ix[dev_index]
-        val_X_df = train_df.ix[val_index]
+        dev_X_df = train_df.iloc[dev_index]
+        val_X_df = train_df.iloc[val_index]
         preds, model = predictXGB(dev_X_df, val_X_df, dev_X, dev_y, val_X, val_y)
         cv_scores.append(log_loss(val_y, preds))
         print(cv_scores)

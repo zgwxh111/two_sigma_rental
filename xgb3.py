@@ -286,7 +286,6 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
 def saturate_listing_id_created(pred_df):
     borne_1 = 200000
     borne_2 = 250000
-    pred_df['alpha'] = pred_df['d'].apply(lambda x: alpha_listing_id_created(x))
     pred_df['alpha'] = 0
     pred_df.loc[pred_df['d'] >= borne_1, 'alpha'] = 1.0*(pred_df.loc[pred_df['d'] >= borne_1, 'd']-borne_1)/(borne_2-borne_1)
     pred_df.loc[pred_df['d'] >= borne_2, 'alpha'] = 1

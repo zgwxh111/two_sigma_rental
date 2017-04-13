@@ -44,11 +44,12 @@ cv_n_splits = 3
 cv_test_size = .3
 
 # load the data
-LOAD_DATA = True
-DO_CV = True
+LOAD_DATA = False
+DO_CV = False
 # create submission file
-CREATE_SUBMISSION_FILE = True
-
+CREATE_SUBMISSION_FILE = False
+# param tuning
+PARAM_TUNING = True
 
 
 
@@ -249,18 +250,21 @@ def create_train_test_sets (train_df, test_df):
 ##################################################################
 # Training function
 ##################################################################
-def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True):
-    param = {}
-    param['objective'] = 'multi:softprob'
-    param['eta'] = 0.02
-    param['max_depth'] = 4
-    param['silent'] = 1
-    param['num_class'] = 3
-    param['eval_metric'] = "mlogloss"
-    param['min_child_weight'] = 1
-    param['subsample'] = 0.7
-    param['colsample_bytree'] = 0.7
-    param['seed'] = seed_val
+def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, 
+           param = None, verbose=True):
+    
+    if param == None:
+        param = {}
+        param['objective'] = 'multi:softprob'
+        param['eta'] = 0.02
+        param['max_depth'] = 4
+        param['silent'] = 1
+        param['num_class'] = 3
+        param['eval_metric'] = "mlogloss"
+        param['min_child_weight'] = 1
+        param['subsample'] = 0.7
+        param['colsample_bytree'] = 0.7
+        param['seed'] = seed_val
     num_rounds = num_rounds
 
     plst = list(param.items())
@@ -278,6 +282,7 @@ def runXGB(train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0
     
     return pred_test_y, model
 
+
 def saturate_listing_id_created(pred_df):
     borne_1 = 200000
     borne_2 = 250000
@@ -290,9 +295,11 @@ def saturate_listing_id_created(pred_df):
     pred_df[2] = (1-pred_df['alpha']) * pred_df[2]
     del pred_df['alpha']
 
-def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, verbose=True):
+def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature_names=None, seed_val=0, num_rounds=2000, 
+               param = None, verbose=True):
     
-    pred_test_y, model = runXGB(train_X, train_y, test_X, test_y=test_y, feature_names=feature_names, seed_val=seed_val, num_rounds=num_rounds, verbose=verbose)
+    pred_test_y, model = runXGB(train_X, train_y, test_X, test_y=test_y, feature_names=feature_names, 
+                                seed_val=seed_val, num_rounds=num_rounds, param = param, verbose=verbose)
     
     # Linear regression : listing_id = f(created)
     x = train_df['created'].astype(int).values[:,np.newaxis]
@@ -316,24 +323,26 @@ def predictXGB(train_df, test_df, train_X, train_y, test_X, test_y=None, feature
 ##################################################################
 # Cross validation 
 ##################################################################
-def crossval (train_df, test_df, X_train, y_train, Nfolds):
+def crossval (train_df, test_df, X_train, y_train, Nfolds, num_rounds, param = None):
     cv_scores = []
+    nrounds = []
     kf = KFold(n_splits=Nfolds, shuffle=True, random_state=seed)
     for dev_index, val_index in kf.split(range(X_train.shape[0])):
         dev_X, val_X = X_train[dev_index,:], X_train[val_index,:]
         dev_y, val_y = y_train[dev_index], y_train[val_index]
         dev_X_df = train_df.iloc[dev_index]
         val_X_df = train_df.iloc[val_index]
-        preds, model = predictXGB(dev_X_df, val_X_df, dev_X, dev_y, val_X, val_y)
+        preds, model = predictXGB(dev_X_df, val_X_df, dev_X, dev_y, val_X, val_y, num_rounds=num_rounds, param = param)
         cv_scores.append(log_loss(val_y, preds))
+        nrounds.append(model.best_iteration)
         print(cv_scores)
-    return cv_scores
+    return cv_scores, nrounds
 
 
 ##################################################################
 # Output files saving
 ##################################################################
-def create_output_files (train_df, test_df, X_train, y_train, X_test, test_listing_id, cv_scores = None, num_rounds=400):
+def create_output_files (train_df, test_df, X_train, y_train, X_test, cv_scores = None, num_rounds=2000):
     # make predictions
     preds, model = predictXGB(train_df, test_df, X_train, y_train, X_test, num_rounds=num_rounds)
     out_df = pd.DataFrame(preds)
@@ -368,14 +377,17 @@ if LOAD_DATA == True:
     X_train, y_train, X_test = create_train_test_sets(train_df, test_df)
 
 
+
+NUM_ROUNDS = 2500
+
 # Cross validation
 if DO_CV == True:
-    cv_scores = crossval(train_df, test_df, X_train, y_train, 5)
+    cv_scores, nrounds = crossval(train_df, test_df, X_train, y_train, 5, num_rounds=NUM_ROUNDS)
     #cv = ShuffleSplit(n_splits=cv_n_splits, test_size=cv_test_size, random_state=seed)
     #cv_score = cross_val_score(clf, X_train, y_train, cv=cv)
     print('CV score: log_loss = ' + str(np.mean(cv_scores)))
     if (valid_size > 0):
-        preds, model = predictXGB(train_df, test_df, X_train, y_train, X_val, num_rounds=2000)
+        preds, model = predictXGB(train_df, test_df, X_train, y_train, X_val, num_rounds=NUM_ROUNDS)
         val_score = log_loss(y_val, preds)
         print('Validation set: log_loss = ' + str(val_score))
 
@@ -383,5 +395,53 @@ if DO_CV == True:
 
 # creating output file
 if CREATE_SUBMISSION_FILE == True:
-    create_output_files(train_df, test_df, X_train, y_train, X_test, test_listing_id, cv_scores, num_rounds=2000)
+    create_output_files(train_df, test_df, X_train, y_train, X_test, cv_scores, num_rounds=NUM_ROUNDS)
+
+
+
+
+
+
+
+# Param tuning
+
+if PARAM_TUNING == True:
+    
+    params={}
+    params['eta'] = [0.2, 0.1, 0.08, 0.05, 0.03, 0.02, 0.01] 
+    params['max_depth'] = [3,4,5]
+    params['min_child_weight'] = [1, 2, 3]
+    params['gamma'] = [0.1, 0.2, 0.3]
+    num_rounds = 10000   
+    
+    result=pd.DataFrame([])   
+    for gamma in params['gamma']:
+        for max_depth in params['max_depth']:
+            for min_child_weight in params['min_child_weight']:
+                for eta in params['eta']:
+                    param = {}
+                    param['objective'] = 'multi:softprob'
+                    param['eta'] = eta 
+                    param['max_depth'] = max_depth
+                    param['silent'] = 1
+                    param['num_class'] = 3
+                    param['eval_metric'] = "mlogloss"
+                    param['min_child_weight'] = min_child_weight
+                    param['subsample'] = 0.7
+                    param['colsample_bytree'] = 0.7
+                    param['gamma'] = gamma
+                    param['seed'] = 0
+                    
+                    res = pd.DataFrame()
+                    res['eta'] = [eta]
+                    res['max_depth'] = [max_depth]
+                    res['min_child_weight'] = [min_child_weight]
+                    res['gamma'] = [gamma]
+                    cv_scores, nrounds = crossval(train_df, test_df, X_train, y_train, 4, num_rounds=num_rounds, param = param)
+                    res['cv_score'] = [np.mean(cv_scores)]
+                    res['nrounds'] = [np.max(nrounds)]
+                    result = result.append(res)
+                    
+                    date = mp.strdate()
+                    result.to_csv('../output/results' + date + '.csv', index=False)
     

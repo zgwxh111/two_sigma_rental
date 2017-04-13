@@ -13,7 +13,7 @@ params['eta'] = [0.01, 0.02, 0.03, 0.05, 0.08, 0.1, 0.2]
 params['max_depth'] = [3,4,5]
 params['min_child_weight'] = [1, 2, 3]
 params['gamma'] = [0.1, 0.2, 0.5]
-num_rounds = 4000
+num_rounds = 10000
 
 
 result=pd.DataFrame([])
